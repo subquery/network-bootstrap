@@ -1,0 +1,29 @@
+[package]
+name = "network_bootstrap"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+dotenv = "0.15.0"
+either = "1.13.0"
+futures-util = "0.3.31"
+hex = "0.4.3"
+libp2p = { version = "0.55", features = [
+  "dns",
+  "tokio",
+  "identify",
+  "json",
+  "kad",
+  "ping",
+  "pnet",
+  "request-response",
+  "secp256k1",
+  "serde",
+  "tcp",
+  "yamux",
+  "noise",
+] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
