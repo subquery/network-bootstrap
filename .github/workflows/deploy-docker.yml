@@ -41,7 +41,7 @@ jobs:
           file: ./Dockerfile
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          tags: onfinality/networkd_bootstrap:v${{ steps.fetch-version.outputs.VERSION }}
+          tags: subquerynetwork/network_bootstrap:v${{ steps.fetch-version.outputs.VERSION }}
           build-args: RELEASE_VERSION=${{ steps.fetch-version.outputs.VERSION }}
           ssh: default
 
