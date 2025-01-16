@@ -16,9 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Setup | Rust
-        uses: ATiltedTree/setup-rust@v1
-        with:
-          rust-version: stable
+      - uses: moonrepo/setup-rust@v1
+      - run: cargo test
 
       - run: cargo fmt
