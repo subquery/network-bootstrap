@@ -114,10 +114,9 @@ impl EventLoop {
                 let local_peer_id = PeerId::from(key.clone().public());
 
                 let mut kad_config = KadConfig::new(StreamProtocol::new("/agent/connection/1.0.0"));
-                kad_config.set_periodic_bootstrap_interval(Some(Duration::from_secs(10)));
+                kad_config.set_periodic_bootstrap_interval(Some(Duration::from_secs(120)));
                 kad_config.set_publication_interval(Some(Duration::from_secs(120)));
                 kad_config.set_replication_interval(Some(Duration::from_secs(120)));
-                kad_config.set_periodic_bootstrap_interval(Some(Duration::from_secs(300)));
                 let kad_memory = KadInMemory::new(local_peer_id);
                 let kad = KadBehavior::with_config(local_peer_id, kad_memory, kad_config);
 
@@ -126,16 +125,16 @@ impl EventLoop {
                     key.clone().public(),
                 )
                 .with_push_listen_addr_updates(true)
-                .with_interval(Duration::from_secs(30));
+                .with_interval(Duration::from_secs(120));
                 let identify = IdentifyBehavior::new(identify_config);
 
                 let ping = ping::Behaviour::new(
-                    ping::Config::new().with_interval(Duration::from_secs(10)),
+                    ping::Config::new().with_interval(Duration::from_secs(120)),
                 );
 
                 AgentBehavior::new(kad, identify, ping)
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(120)))
             .build();
 
         swarm.behaviour_mut().kad.set_mode(Some(kad::Mode::Server));
