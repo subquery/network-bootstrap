@@ -1,12 +1,16 @@
 use crate::mod_libp2p::behavior::{AgentBehavior, AgentEvent};
+use alloy::primitives::{keccak256, Address};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use either::Either;
 use futures_util::StreamExt;
 use libp2p::{
     core::transport::upgrade::Version,
     dns,
-    identify::{Behaviour as IdentifyBehavior, Config as IdentifyConfig, Event as IdentifyEvent},
-    identity::{self, Keypair},
+    identify::{
+        Behaviour as IdentifyBehavior, Config as IdentifyConfig, Event as IdentifyEvent,
+        Info as IdentifyInfo,
+    },
+    identity::{self, Keypair, PublicKey as Libp2pPublicKey},
     kad::{
         self, store::MemoryStore as KadInMemory, Behaviour as KadBehavior, Config as KadConfig,
         Event as KademliaEvent,
@@ -17,6 +21,7 @@ use libp2p::{
     swarm::SwarmEvent,
     tcp, yamux, PeerId, StreamProtocol, Swarm, Transport,
 };
+use serde_json::{json, Value};
 use std::{error::Error, time::Duration};
 use tracing::info;
 
@@ -61,9 +66,28 @@ impl EventLoop {
 
     async fn handle_identify_event(&mut self, event: IdentifyEvent) {
         match event {
-            IdentifyEvent::Received { peer_id, info, .. } => {
-                for addr in info.clone().listen_addrs {
-                    self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+            IdentifyEvent::Received {
+                connection_id,
+                peer_id,
+                info:
+                    IdentifyInfo {
+                        public_key,
+                        listen_addrs,
+                        ..
+                    },
+            } => {
+                if let Ok(controller_address) =
+                    Self::libp2p_publickey_to_eth_address(&public_key).await
+                {
+                    if let Ok(()) = Self::is_controller_valid(&controller_address).await {
+                        for addr in listen_addrs {
+                            self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                        }
+                    } else {
+                        self.swarm.close_connection(connection_id);
+                    }
+                } else {
+                    self.swarm.close_connection(connection_id);
                 }
             }
             _ => {}
@@ -155,5 +179,50 @@ impl EventLoop {
             .try_into()
             .map_err(|_| "Decoded key must be 32 bytes long")?;
         Ok(PreSharedKey::new(key))
+    }
+
+    async fn libp2p_publickey_to_eth_address(
+        pub_key: &Libp2pPublicKey,
+    ) -> Result<String, Box<dyn Error>> {
+        if let Ok(secp256k1_key) = pub_key.clone().try_into_secp256k1() {
+            let pub_key_bytes = secp256k1_key.to_bytes_uncompressed();
+
+            let hash = keccak256(&pub_key_bytes[1..]);
+            let address = Address::from_slice(&hash[12..]);
+
+            Ok(address.to_checksum(None).to_lowercase())
+        } else {
+            Err("libp2p key error, cannot convert into secp256k1 key".into())
+        }
+    }
+
+    async fn is_controller_valid(controller: &str) -> Result<(), Box<dyn Error>> {
+        let client = reqwest::Client::new();
+
+        let query = json!({
+            "query": format!("{{\n  indexers(filter: {{controller: {{equalToInsensitive: \"{}\"}}}}) {{\n    nodes {{\n      id\n    }}\n  }}\n}}", controller)
+        });
+
+        let response = client
+            .post("https://api.subquery.network/sq/subquery/subquery-mainnet")
+            .json(&query)
+            .send()
+            .await?;
+
+        let body = response.text().await?;
+
+        let v: Value = serde_json::from_str(&body)?;
+        if let Some(_id) = v
+            .get("data")
+            .and_then(|data| data.get("indexers"))
+            .and_then(|indexers| indexers.get("nodes"))
+            .and_then(|nodes| nodes.get(0))
+            .and_then(|node| node.get("id"))
+            .and_then(|id| id.as_str())
+        {
+            Ok(())
+        } else {
+            Err("controller is not valid".into())
+        }
     }
 }
