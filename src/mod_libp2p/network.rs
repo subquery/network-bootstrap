@@ -102,6 +102,12 @@ impl EventLoop {
                         for addr in listen_addrs {
                             self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
                         }
+                    } else {
+                        error!(
+                            "peer_id {:?} is not valid, ethereum address: {} is not registered",
+                            peer_id, controller_address
+                        );
+                        self.swarm.close_connection(connection_id);
                     }
                 } else {
                     error!(
