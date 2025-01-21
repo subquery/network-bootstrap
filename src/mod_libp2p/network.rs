@@ -94,27 +94,20 @@ impl EventLoop {
                 if let Ok(controller_address) =
                     Self::libp2p_publickey_to_eth_address(&public_key).await
                 {
-                    if controller_address == METRICS_ADDRESS {
+                    if controller_address == METRICS_ADDRESS
+                        || Self::is_controller_valid(&controller_address).await.is_ok()
+                    {
                         indexer_cache.cache_set(peer_id, ());
                         drop(indexer_cache);
                         for addr in listen_addrs {
                             self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
                         }
-                    } else if let Ok(()) = Self::is_controller_valid(&controller_address).await {
-                        indexer_cache.cache_set(peer_id, ());
-                        drop(indexer_cache);
-                        for addr in listen_addrs {
-                            self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
-                        }
-                    } else {
-                        error!(
-                            "peer_id {:?} not found, controller_address is {:?}",
-                            peer_id, controller_address
-                        );
-                        self.swarm.close_connection(connection_id);
                     }
                 } else {
-                    error!("peer_id {:?} not found, controller_address cannot be converted into ethereum address", peer_id);
+                    error!(
+                        "peer_id {:?} is not valid, cannot convert into ethereum address",
+                        peer_id,
+                    );
                     self.swarm.close_connection(connection_id);
                 }
             }
