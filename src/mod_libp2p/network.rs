@@ -32,7 +32,7 @@ pub(crate) struct EventLoop {
     swarm: Swarm<AgentBehavior>,
 }
 
-const METRICS_ADDRESS: &str = "0x38285cb9e23ac02b9c6f4a2fff9c6df45c59f1dc";
+const METRICS_ADDRESS: &str = "0x41526be3cde4b0ff39a4a2908af3527a703e9fda";
 
 const QUERY_INDEXER_URL: &str = match option_env!("USE_TESTNET_QUERY") {
     Some(_value) => "https://api.subquery.network/sq/subquery/base-testnet",
