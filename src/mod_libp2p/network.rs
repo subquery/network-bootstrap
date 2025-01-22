@@ -34,10 +34,10 @@ pub(crate) struct EventLoop {
 
 const METRICS_ADDRESS: &str = "0x41526be3cde4b0ff39a4a2908af3527a703e9fda";
 
-const QUERY_INDEXER_URL: &str = match option_env!("USE_TESTNET_QUERY") {
-    Some(_value) => "https://api.subquery.network/sq/subquery/base-testnet",
-    None => "https://api.subquery.network/sq/subquery/subquery-mainnet",
-};
+pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| match std::env::var("USE_TESTNET_QUERY") {
+    Ok(_value) => "https://api.subquery.network/sq/subquery/base-testnet",
+    _ => "https://api.subquery.network/sq/subquery/subquery-mainnet",
+});
 
 static GLOBAL_INDEXER_CACHE: Lazy<Mutex<SizedCache<PeerId, ()>>> =
     Lazy::new(|| Mutex::new(SizedCache::with_size(2000)));
@@ -229,7 +229,7 @@ impl EventLoop {
             "query": format!("{{\n  indexers(filter: {{controller: {{equalToInsensitive: \"{}\"}}}}) {{\n    nodes {{\n      id\n    }}\n  }}\n}}", controller)
         });
 
-        let response = client.post(QUERY_INDEXER_URL).json(&query).send().await?;
+        let response = client.post(*QUERY_INDEXER_URL).json(&query).send().await?;
 
         let body = response.text().await?;
 
