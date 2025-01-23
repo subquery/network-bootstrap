@@ -61,8 +61,13 @@ impl EventLoop {
     pub async fn handle_event(&mut self, event: SwarmEvent<AgentEvent>) {
         match event {
             SwarmEvent::ConnectionEstablished { .. } => {}
-            SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                self.swarm.behaviour_mut().kad.remove_peer(&peer_id);
+            SwarmEvent::ConnectionClosed { peer_id, num_established, .. } => {
+                if num_established == 0 {
+                    let mut indexer_cache = GLOBAL_INDEXER_CACHE.lock().await;
+                    indexer_cache.cache_remove(&peer_id);
+                    drop(indexer_cache);
+                    self.swarm.behaviour_mut().kad.remove_peer(&peer_id);
+                }
             }
             SwarmEvent::Behaviour(AgentEvent::Identify(sub_event)) => {
                 self.handle_identify_event(sub_event).await
