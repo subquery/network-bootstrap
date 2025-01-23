@@ -2,7 +2,6 @@ use crate::mod_libp2p::behavior::{AgentBehavior, AgentEvent};
 use alloy::primitives::{keccak256, Address};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use cached::{stores::SizedCache, Cached};
-use either::Either;
 use futures_util::StreamExt;
 use libp2p::{
     core::transport::upgrade::Version,
@@ -26,13 +25,14 @@ use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use std::{error::Error, time::Duration};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::error;
 
 pub(crate) struct EventLoop {
     swarm: Swarm<AgentBehavior>,
 }
 
 const METRICS_ADDRESS: &str = "0x41526be3cde4b0ff39a4a2908af3527a703e9fda";
+const PRIVATE_NETWORK_KEY: &str = "wiwlLGQ8g6zu0mcckkROzeeAU7xN+Adz40ELWSH3f1M=";
 
 pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| match std::env::var("USE_TESTNET_QUERY") {
     Ok(_value) => "https://api.subquery.network/sq/subquery/base-testnet",
@@ -132,9 +132,7 @@ impl EventLoop {
 
         let psk = Self::get_psk();
 
-        if let Ok(psk) = psk {
-            info!("using swarm key with fingerprint: {}", psk.fingerprint());
-        }
+        // info!("using swarm key with fingerprint: {}", psk.fingerprint());
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(libp2p_keypair.clone())
             .with_tokio()
@@ -147,13 +145,8 @@ impl EventLoop {
                 let base_transport = dns::tokio::Transport::system(base_transport)
                     .expect("DNS")
                     .boxed();
-                let maybe_encrypted = match psk {
-                    Ok(psk) => Either::Left(
-                        base_transport
-                            .and_then(move |socket, _| PnetConfig::new(psk).handshake(socket)),
-                    ),
-                    Err(_) => Either::Right(base_transport),
-                };
+                let maybe_encrypted = base_transport
+                    .and_then(move |socket, _| PnetConfig::new(psk).handshake(socket));
                 maybe_encrypted
                     .upgrade(Version::V1Lazy)
                     .authenticate(noise_config)
@@ -197,14 +190,13 @@ impl EventLoop {
     }
 
     /// Read the pre shared key file from the given ipfs directory
-    fn get_psk() -> Result<PreSharedKey, Box<dyn Error>> {
-        let base64_key =
-            std::env::var("PRIVITE_NET_KEY").map_err(|_| "PRIVITE_NET_KEY missing in .env")?;
-        let bytes = STANDARD.decode(&base64_key)?;
+    fn get_psk() -> PreSharedKey {
+        let bytes = STANDARD.decode(PRIVATE_NETWORK_KEY).unwrap();
         let key: [u8; 32] = bytes
             .try_into()
-            .map_err(|_| "Decoded key must be 32 bytes long")?;
-        Ok(PreSharedKey::new(key))
+            .map_err(|_| "Decoded key must be 32 bytes long")
+            .unwrap();
+        PreSharedKey::new(key)
     }
 
     async fn libp2p_publickey_to_eth_address(
