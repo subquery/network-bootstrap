@@ -8,7 +8,6 @@ alloy = "0.9"
 base64 = "0.22"
 cached = "0.54"
 dotenv = "0.15"
-either = "1.13"
 futures-util = "0.3"
 hex = "0.4"
 libp2p = { version = "0.55", features = [
