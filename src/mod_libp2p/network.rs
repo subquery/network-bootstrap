@@ -27,20 +27,23 @@ use std::{error::Error, time::Duration};
 use tokio::sync::Mutex;
 use tracing::error;
 
-pub(crate) struct EventLoop {
-    swarm: Swarm<AgentBehavior>,
-}
-
 const METRICS_ADDRESS: &str = "0x41526be3cde4b0ff39a4a2908af3527a703e9fda";
 const PRIVATE_NETWORK_KEY: &str = "wiwlLGQ8g6zu0mcckkROzeeAU7xN+Adz40ELWSH3f1M=";
 
-pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| match std::env::var("USE_TESTNET_QUERY") {
-    Ok(_value) => "https://api.subquery.network/sq/subquery/base-testnet",
-    _ => "https://api.subquery.network/sq/subquery/subquery-mainnet",
+pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| {
+    if std::env::var("NETWORK").as_deref() == Ok("testnet") {
+        "https://api.subquery.network/sq/subquery/base-testnet"
+    } else {
+        "https://api.subquery.network/sq/subquery/subquery-mainnet"
+    }
 });
 
 static GLOBAL_INDEXER_CACHE: Lazy<Mutex<SizedCache<PeerId, ()>>> =
     Lazy::new(|| Mutex::new(SizedCache::with_size(2000)));
+
+pub(crate) struct EventLoop {
+    swarm: Swarm<AgentBehavior>,
+}
 
 impl EventLoop {
     pub async fn new() -> Result<Self, Box<dyn Error>> {
