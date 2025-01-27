@@ -27,7 +27,18 @@ use std::{error::Error, time::Duration};
 use tokio::sync::Mutex;
 use tracing::error;
 
-const METRICS_ADDRESS: &str = "0x41526be3cde4b0ff39a4a2908af3527a703e9fda";
+pub const TEST_BOOSTNODE_PEER_ID_LIST: [&str; 3] = [
+    "16Uiu2HAm5SPUotukayoKUZG5jQQ9zAGgjAXXz4Tg62kzZMbikLdQ",
+    "16Uiu2HAm3iA5E2xfMsVBtKnh4DEbCDmGEsQJMGWVsVWPMESsfnso",
+    "16Uiu2HAmUFSkx4esqLoos3TvA55WKNDJURoqCrjQLGGuKeZWiw8e",
+];
+pub const PRODUCTION_BOOSTNODE_PEER_ID_LIST: [&str; 3] = [
+    "16Uiu2HAm9dyPd6p9oU1bL1Sc7sJUg5WrB7gL4tJomesK27q3meHm",
+    "16Uiu2HAmSN16v7Pq4EXam94c1Q8k3pTyCdumiRJfof7cYzPGpwQN",
+    "16Uiu2HAm14nXNnB1GxnocpmHckaXfqtshp5ZD8QJvXeXr6kvV4KM",
+];
+
+pub const METRICS_PEER_ID: &str = "16Uiu2HAmNa64mzMD6Uq4EhUTdHKoZE7MLiEh7hCK3ACN5F5MgJoL";
 const PRIVATE_NETWORK_KEY: &str = "wiwlLGQ8g6zu0mcckkROzeeAU7xN+Adz40ELWSH3f1M=";
 
 pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| {
@@ -36,6 +47,17 @@ pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| {
     } else {
         "https://api.subquery.network/sq/subquery/subquery-mainnet"
     }
+});
+
+static LAZY_BOOTNODE_METRICS_LIST: Lazy<Vec<&str>> = Lazy::new(|| {
+    let mut list = if std::env::var("NETWORK").as_deref() == Ok("testnet") {
+        TEST_BOOSTNODE_PEER_ID_LIST.to_vec()
+    } else {
+        PRODUCTION_BOOSTNODE_PEER_ID_LIST.to_vec()
+    };
+
+    list.push(METRICS_PEER_ID);
+    list
 });
 
 static GLOBAL_INDEXER_CACHE: Lazy<Mutex<SizedCache<PeerId, ()>>> =
@@ -64,7 +86,11 @@ impl EventLoop {
     pub async fn handle_event(&mut self, event: SwarmEvent<AgentEvent>) {
         match event {
             SwarmEvent::ConnectionEstablished { .. } => {}
-            SwarmEvent::ConnectionClosed { peer_id, num_established, .. } => {
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established,
+                ..
+            } => {
                 if num_established == 0 {
                     let mut indexer_cache = GLOBAL_INDEXER_CACHE.lock().await;
                     indexer_cache.cache_remove(&peer_id);
@@ -99,18 +125,19 @@ impl EventLoop {
         {
             let mut indexer_cache = GLOBAL_INDEXER_CACHE.lock().await;
             if indexer_cache.cache_get(&peer_id).is_none() {
-                if let Ok(controller_address) =
+                if LAZY_BOOTNODE_METRICS_LIST.contains(&peer_id.to_base58().as_str()) {
+                    indexer_cache.cache_set(peer_id, ());
+                    drop(indexer_cache);
+                    for addr in listen_addrs {
+                        self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                    }
+                } else if let Ok(controller_address) =
                     Self::libp2p_publickey_to_eth_address(&public_key).await
                 {
-                    if controller_address == METRICS_ADDRESS
-                        || Self::is_controller_valid(&controller_address).await.is_ok()
+                    if Self::is_controller_valid(&controller_address)
+                        .await
+                        .is_err()
                     {
-                        indexer_cache.cache_set(peer_id, ());
-                        drop(indexer_cache);
-                        for addr in listen_addrs {
-                            self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
-                        }
-                    } else {
                         error!(
                             "peer_id {:?} is not valid, ethereum address: {} is not registered",
                             peer_id, controller_address
