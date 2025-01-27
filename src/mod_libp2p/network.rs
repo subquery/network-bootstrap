@@ -23,9 +23,9 @@ use libp2p::{
 };
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
-use std::{error::Error, time::Duration};
+use std::{collections::HashSet, error::Error, time::Duration};
 use tokio::sync::Mutex;
-use tracing::error;
+use tracing::{error, info};
 
 pub const TEST_BOOSTNODE_PEER_ID_LIST: [&str; 3] = [
     "16Uiu2HAm5SPUotukayoKUZG5jQQ9zAGgjAXXz4Tg62kzZMbikLdQ",
@@ -76,9 +76,23 @@ impl EventLoop {
     }
 
     pub(crate) async fn run(&mut self) {
+        let mut interval1 = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        let mut interval2 = tokio::time::interval(tokio::time::Duration::from_secs(60));
         loop {
             tokio::select! {
                 event = self.swarm.select_next_some() => self.handle_event(event).await,
+                _ = interval1.tick() => {
+                    let peer_list = self.swarm.behaviour_mut().kad_known_peers();
+                    info!("\n------ 60 secs, local_peer_id is {:?}, kad peer list is {:?}\n\n", self.swarm.local_peer_id(), peer_list);
+                }
+
+                _ = interval2.tick() => {
+                    let mut peer_list = HashSet::new();
+                    for peer in self.swarm.connected_peers() {
+                        peer_list.insert(peer);
+                    }
+                    info!("\n------ 60 secs, local_peer_id is {:?}, swarm peer list is {:?}\n\n", self.swarm.local_peer_id(), peer_list);
+                }
             }
         }
     }
