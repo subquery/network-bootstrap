@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-alloy = "0.9"
+alloy = "0.11"
 base64 = "0.22"
 cached = "0.54"
 dotenv = "0.15"
