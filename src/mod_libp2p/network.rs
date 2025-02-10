@@ -1,5 +1,6 @@
 use crate::mod_libp2p::behavior::{AgentBehavior, AgentEvent};
 use alloy::primitives::{keccak256, Address};
+use cached::{stores::SizedCache, Cached};
 use futures_util::StreamExt;
 use libp2p::{
     identify::{
@@ -19,6 +20,7 @@ use libp2p::{
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use std::{collections::HashSet, error::Error, time::Duration};
+use tokio::sync::Mutex;
 use tracing::{error, info};
 
 pub const TEST_BOOSTNODE_PEER_ID_LIST: [&str; 3] = [
@@ -52,6 +54,9 @@ static LAZY_BOOTNODE_METRICS_LIST: Lazy<Vec<&str>> = Lazy::new(|| {
     list.push(METRICS_PEER_ID);
     list
 });
+
+static GLOBAL_INDEXER_CACHE: Lazy<Mutex<SizedCache<PeerId, ()>>> =
+    Lazy::new(|| Mutex::new(SizedCache::with_size(2000)));
 
 pub(crate) struct EventLoop {
     swarm: Swarm<AgentBehavior>,
@@ -96,6 +101,9 @@ impl EventLoop {
                 ..
             } => {
                 if num_established == 0 {
+                    let mut indexer_cache = GLOBAL_INDEXER_CACHE.lock().await;
+                    indexer_cache.cache_remove(&peer_id);
+                    drop(indexer_cache);
                     self.swarm.behaviour_mut().kad.remove_peer(&peer_id);
                 }
             }
@@ -124,10 +132,11 @@ impl EventLoop {
                 },
         } = event
         {
-            let allow_peers = self.swarm.behaviour_mut().allowed_peers.allowed_peers();
-            if allow_peers.get(&peer_id).is_none() {
+            let mut indexer_cache = GLOBAL_INDEXER_CACHE.lock().await;
+            if indexer_cache.cache_get(&peer_id).is_none() {
                 if LAZY_BOOTNODE_METRICS_LIST.contains(&peer_id.to_base58().as_str()) {
-                    self.swarm.behaviour_mut().allowed_peers.allow_peer(peer_id);
+                    indexer_cache.cache_set(peer_id, ());
+                    drop(indexer_cache);
                     for addr in listen_addrs {
                         self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
                     }
