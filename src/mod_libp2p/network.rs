@@ -1,11 +1,8 @@
 use crate::mod_libp2p::behavior::{AgentBehavior, AgentEvent};
 use alloy::primitives::{keccak256, Address};
-use base64::{engine::general_purpose::STANDARD, Engine};
 use cached::{stores::SizedCache, Cached};
 use futures_util::StreamExt;
 use libp2p::{
-    core::transport::upgrade::Version,
-    dns,
     identify::{
         Behaviour as IdentifyBehavior, Config as IdentifyConfig, Event as IdentifyEvent,
         Info as IdentifyInfo,
@@ -17,9 +14,8 @@ use libp2p::{
     },
     noise,
     ping::{self, Event as PingEvent},
-    pnet::{PnetConfig, PreSharedKey},
     swarm::SwarmEvent,
-    tcp, yamux, PeerId, StreamProtocol, Swarm, Transport,
+    tls, yamux, PeerId, StreamProtocol, Swarm,
 };
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
@@ -39,7 +35,6 @@ pub const PRODUCTION_BOOSTNODE_PEER_ID_LIST: [&str; 3] = [
 ];
 
 pub const METRICS_PEER_ID: &str = "16Uiu2HAmNa64mzMD6Uq4EhUTdHKoZE7MLiEh7hCK3ACN5F5MgJoL";
-const PRIVATE_NETWORK_KEY: &str = "wiwlLGQ8g6zu0mcckkROzeeAU7xN+Adz40ELWSH3f1M=";
 
 pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| {
     if std::env::var("NETWORK").as_deref() == Ok("testnet") {
@@ -179,28 +174,14 @@ impl EventLoop {
         let secret_key = identity::secp256k1::SecretKey::try_from_bytes(private_key_bytes)?;
         let libp2p_keypair: Keypair = identity::secp256k1::Keypair::from(secret_key).into();
 
-        let psk = Self::get_psk();
-
-        // info!("using swarm key with fingerprint: {}", psk.fingerprint());
-
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(libp2p_keypair.clone())
             .with_tokio()
-            .with_other_transport(|key| {
-                let noise_config = noise::Config::new(key).unwrap();
-                let mut yamux_config = yamux::Config::default();
-                yamux_config.set_max_num_streams(1024 * 1024);
-                let base_transport =
-                    tcp::tokio::Transport::new(tcp::Config::default().nodelay(true));
-                let base_transport = dns::tokio::Transport::system(base_transport)
-                    .expect("DNS")
-                    .boxed();
-                let maybe_encrypted = base_transport
-                    .and_then(move |socket, _| PnetConfig::new(psk).handshake(socket));
-                maybe_encrypted
-                    .upgrade(Version::V1Lazy)
-                    .authenticate(noise_config)
-                    .multiplex(yamux_config)
-            })?
+            .with_tcp(
+                Default::default(),
+                (tls::Config::new, noise::Config::new),
+                yamux::Config::default,
+            )?
+            .with_quic()
             .with_dns()?
             .with_behaviour(|key| {
                 let local_peer_id = PeerId::from(key.clone().public());
@@ -231,21 +212,16 @@ impl EventLoop {
 
         swarm.behaviour_mut().kad.set_mode(Some(kad::Mode::Server));
 
-        let private_net_address =
-            std::env::var("PRIVITE_NET_ADDRESS").unwrap_or("/ip4/0.0.0.0/tcp/8000".to_string());
-        let private_net_address = private_net_address.parse()?;
-        swarm.listen_on(private_net_address)?;
-        Ok(swarm)
-    }
+        let libp2p_tcp_listen_address = std::env::var("LIBP2P_TCP_LISTEN_ADDRESS")
+            .unwrap_or("/ip4/0.0.0.0/tcp/8000".to_string());
+        let libp2p_tcp_listen_address = libp2p_tcp_listen_address.parse()?;
+        swarm.listen_on(libp2p_tcp_listen_address)?;
 
-    /// Read the pre shared key file from the given ipfs directory
-    fn get_psk() -> PreSharedKey {
-        let bytes = STANDARD.decode(PRIVATE_NETWORK_KEY).unwrap();
-        let key: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| "Decoded key must be 32 bytes long")
-            .unwrap();
-        PreSharedKey::new(key)
+        let libp2p_quic_listen_address = std::env::var("LIBP2P_QUIC_LISTEN_ADDRESS")
+            .unwrap_or("/ip4/0.0.0.0/udp/8003/quic-v1".to_string());
+        let libp2p_quic_listen_address = libp2p_quic_listen_address.parse()?;
+        swarm.listen_on(libp2p_quic_listen_address)?;
+        Ok(swarm)
     }
 
     async fn libp2p_publickey_to_eth_address(
