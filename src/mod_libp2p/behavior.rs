@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use libp2p::{
+    allow_block_list::{AllowedPeers, Behaviour as AllowListBehaviour},
     identify::{Behaviour as IdentifyBehavior, Event as IdentifyEvent},
     kad::{
         store::MemoryStore as KademliaInMemory, Behaviour as KademliaBehavior,
@@ -17,6 +18,7 @@ pub(crate) struct AgentBehavior {
     pub identify: IdentifyBehavior,
     pub kad: KademliaBehavior<KademliaInMemory>,
     pub ping: ping::Behaviour,
+    pub allowed_peers: AllowListBehaviour<AllowedPeers>,
 }
 
 impl AgentBehavior {
@@ -25,10 +27,12 @@ impl AgentBehavior {
         identify: IdentifyBehavior,
         ping: PingBehaviour,
     ) -> Self {
+        let allowed_peers = AllowListBehaviour::default();
         Self {
             kad,
             identify,
             ping,
+            allowed_peers,
         }
     }
 
@@ -68,5 +72,11 @@ impl From<KademliaEvent> for AgentEvent {
 impl From<PingEvent> for AgentEvent {
     fn from(value: PingEvent) -> Self {
         Self::Ping(value)
+    }
+}
+
+impl From<std::convert::Infallible> for AgentEvent {
+    fn from(_: std::convert::Infallible) -> Self {
+        panic!("NodeBehaviour is not Infallible!")
     }
 }
