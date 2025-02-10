@@ -1,6 +1,6 @@
 [package]
 name = "network_bootstrap"
-version = "0.1.0"
+version = "0.2.0-beta1"
 edition = "2021"
 
 [dependencies]
@@ -17,11 +17,12 @@ libp2p = { version = "0.55", features = [
   "json",
   "kad",
   "ping",
-  "pnet",
+  "tls",
   "request-response",
   "secp256k1",
   "serde",
   "tcp",
+  "quic",
   "yamux",
   "noise",
 ] }

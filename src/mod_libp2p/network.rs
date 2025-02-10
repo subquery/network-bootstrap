@@ -1,10 +1,8 @@
 use crate::mod_libp2p::behavior::{AgentBehavior, AgentEvent};
 use alloy::primitives::{keccak256, Address};
-use base64::{engine::general_purpose::STANDARD, Engine};
 use cached::{stores::SizedCache, Cached};
 use futures_util::StreamExt;
 use libp2p::{
-    core::transport::upgrade::Version,
     dns,
     identify::{
         Behaviour as IdentifyBehavior, Config as IdentifyConfig, Event as IdentifyEvent,
@@ -17,9 +15,8 @@ use libp2p::{
     },
     noise,
     ping::{self, Event as PingEvent},
-    pnet::{PnetConfig, PreSharedKey},
     swarm::SwarmEvent,
-    tcp, yamux, PeerId, StreamProtocol, Swarm, Transport,
+    tls, yamux, PeerId, StreamProtocol, Swarm,
 };
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
@@ -39,7 +36,7 @@ pub const PRODUCTION_BOOSTNODE_PEER_ID_LIST: [&str; 3] = [
 ];
 
 pub const METRICS_PEER_ID: &str = "16Uiu2HAmNa64mzMD6Uq4EhUTdHKoZE7MLiEh7hCK3ACN5F5MgJoL";
-const PRIVATE_NETWORK_KEY: &str = "wiwlLGQ8g6zu0mcckkROzeeAU7xN+Adz40ELWSH3f1M=";
+pub const TEST_METRICS_PEER_ID: &str = "16Uiu2HAmUGCzsEwPGyuE9HcTzKGY4LUPFpLP3vKpT7buJUAdsKX5";
 
 pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| {
     if std::env::var("NETWORK").as_deref() == Ok("testnet") {
@@ -50,14 +47,15 @@ pub static QUERY_INDEXER_URL: Lazy<&str> = Lazy::new(|| {
 });
 
 static LAZY_BOOTNODE_METRICS_LIST: Lazy<Vec<&str>> = Lazy::new(|| {
-    let mut list = if std::env::var("NETWORK").as_deref() == Ok("testnet") {
-        TEST_BOOSTNODE_PEER_ID_LIST.to_vec()
+    if std::env::var("NETWORK").as_deref() == Ok("testnet") {
+        let mut temp_list = TEST_BOOSTNODE_PEER_ID_LIST.to_vec();
+        temp_list.push(TEST_METRICS_PEER_ID);
+        temp_list
     } else {
-        PRODUCTION_BOOSTNODE_PEER_ID_LIST.to_vec()
-    };
-
-    list.push(METRICS_PEER_ID);
-    list
+        let mut temp_list = PRODUCTION_BOOSTNODE_PEER_ID_LIST.to_vec();
+        temp_list.push(METRICS_PEER_ID);
+        temp_list
+    }
 });
 
 static GLOBAL_INDEXER_CACHE: Lazy<Mutex<SizedCache<PeerId, ()>>> =
@@ -110,6 +108,7 @@ impl EventLoop {
                     indexer_cache.cache_remove(&peer_id);
                     drop(indexer_cache);
                     self.swarm.behaviour_mut().kad.remove_peer(&peer_id);
+                    _ = self.swarm.disconnect_peer_id(peer_id);
                 }
             }
             SwarmEvent::Behaviour(AgentEvent::Identify(sub_event)) => {
@@ -148,15 +147,19 @@ impl EventLoop {
                 } else if let Ok(controller_address) =
                     Self::libp2p_publickey_to_eth_address(&public_key).await
                 {
-                    if Self::is_controller_valid(&controller_address)
-                        .await
-                        .is_err()
-                    {
-                        error!(
-                            "peer_id {:?} is not valid, ethereum address: {} is not registered",
-                            peer_id, controller_address
-                        );
-                        self.swarm.close_connection(connection_id);
+                    match Self::is_controller_valid(&controller_address).await {
+                        Ok(_) => {
+                            for addr in listen_addrs {
+                                self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                            }
+                        }
+                        Err(_) => {
+                            error!(
+                                "peer_id {:?} is not valid, ethereum address: {} is not registered",
+                                peer_id, controller_address
+                            );
+                            self.swarm.close_connection(connection_id);
+                        }
                     }
                 } else {
                     error!(
@@ -179,29 +182,15 @@ impl EventLoop {
         let secret_key = identity::secp256k1::SecretKey::try_from_bytes(private_key_bytes)?;
         let libp2p_keypair: Keypair = identity::secp256k1::Keypair::from(secret_key).into();
 
-        let psk = Self::get_psk();
-
-        // info!("using swarm key with fingerprint: {}", psk.fingerprint());
-
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(libp2p_keypair.clone())
             .with_tokio()
-            .with_other_transport(|key| {
-                let noise_config = noise::Config::new(key).unwrap();
-                let mut yamux_config = yamux::Config::default();
-                yamux_config.set_max_num_streams(1024 * 1024);
-                let base_transport =
-                    tcp::tokio::Transport::new(tcp::Config::default().nodelay(true));
-                let base_transport = dns::tokio::Transport::system(base_transport)
-                    .expect("DNS")
-                    .boxed();
-                let maybe_encrypted = base_transport
-                    .and_then(move |socket, _| PnetConfig::new(psk).handshake(socket));
-                maybe_encrypted
-                    .upgrade(Version::V1Lazy)
-                    .authenticate(noise_config)
-                    .multiplex(yamux_config)
-            })?
-            .with_dns()?
+            .with_tcp(
+                Default::default(),
+                (tls::Config::new, noise::Config::new),
+                yamux::Config::default,
+            )?
+            .with_quic()
+            .with_dns_config(dns::ResolverConfig::default(), dns::ResolverOpts::default())
             .with_behaviour(|key| {
                 let local_peer_id = PeerId::from(key.clone().public());
 
@@ -226,26 +215,21 @@ impl EventLoop {
 
                 AgentBehavior::new(kad, identify, ping)
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(120)))
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(u64::MAX)))
             .build();
 
         swarm.behaviour_mut().kad.set_mode(Some(kad::Mode::Server));
 
-        let private_net_address =
-            std::env::var("PRIVITE_NET_ADDRESS").unwrap_or("/ip4/0.0.0.0/tcp/8000".to_string());
-        let private_net_address = private_net_address.parse()?;
-        swarm.listen_on(private_net_address)?;
-        Ok(swarm)
-    }
+        let libp2p_tcp_listen_address = std::env::var("LIBP2P_TCP_LISTEN_ADDRESS")
+            .unwrap_or("/ip4/0.0.0.0/tcp/8000".to_string());
+        let libp2p_tcp_listen_address = libp2p_tcp_listen_address.parse()?;
+        swarm.listen_on(libp2p_tcp_listen_address)?;
 
-    /// Read the pre shared key file from the given ipfs directory
-    fn get_psk() -> PreSharedKey {
-        let bytes = STANDARD.decode(PRIVATE_NETWORK_KEY).unwrap();
-        let key: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| "Decoded key must be 32 bytes long")
-            .unwrap();
-        PreSharedKey::new(key)
+        let libp2p_quic_listen_address = std::env::var("LIBP2P_QUIC_LISTEN_ADDRESS")
+            .unwrap_or("/ip4/0.0.0.0/udp/8001/quic-v1".to_string());
+        let libp2p_quic_listen_address = libp2p_quic_listen_address.parse()?;
+        swarm.listen_on(libp2p_quic_listen_address)?;
+        Ok(swarm)
     }
 
     async fn libp2p_publickey_to_eth_address(
