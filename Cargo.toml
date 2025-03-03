@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 alloy = "0.11"
 base64 = "0.22"
-cached = "0.54"
+cached = "0.55"
 dotenv = "0.15"
 futures-util = "0.3"
 hex = "0.4"
