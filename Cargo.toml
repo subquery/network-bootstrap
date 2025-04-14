@@ -4,7 +4,7 @@ version = "0.2.0-beta1"
 edition = "2021"
 
 [dependencies]
-alloy = "0.13"
+alloy = "0.14"
 base64 = "0.22"
 cached = "0.55"
 dotenv = "0.15"
