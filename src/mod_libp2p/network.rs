@@ -22,7 +22,7 @@ use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use std::{collections::HashSet, error::Error, time::Duration};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub const TEST_BOOSTNODE_PEER_ID_LIST: [&str; 3] = [
     "16Uiu2HAm5SPUotukayoKUZG5jQQ9zAGgjAXXz4Tg62kzZMbikLdQ",
@@ -76,6 +76,7 @@ impl EventLoop {
     pub(crate) async fn run(&mut self) {
         let mut interval1 = tokio::time::interval(tokio::time::Duration::from_secs(60));
         let mut interval2 = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        let mut interval3 = tokio::time::interval(tokio::time::Duration::from_secs(60));
         loop {
             tokio::select! {
                 event = self.swarm.select_next_some() => self.handle_event(event).await,
@@ -90,6 +91,10 @@ impl EventLoop {
                         peer_list.insert(peer);
                     }
                     info!("\n------ 60 secs, local_peer_id is {:?}, swarm peer list is {:?}\n\n", self.swarm.local_peer_id(), peer_list);
+                }
+
+                _ = interval3.tick() => {
+                    info!("------ 60 secs, Listeners: {:?}", self.swarm.listeners().collect::<Vec<_>>());
                 }
             }
         }
@@ -110,6 +115,28 @@ impl EventLoop {
                     self.swarm.behaviour_mut().kad.remove_peer(&peer_id);
                     _ = self.swarm.disconnect_peer_id(peer_id);
                 }
+            }
+            SwarmEvent::ListenerClosed {
+                reason,
+                addresses,
+                listener_id,
+            } => {
+                warn!(
+                    "Listener closed: {:?}, addresses: {:?}, listener_id is {:?}",
+                    reason, addresses, listener_id
+                );
+                for addr in addresses {
+                    warn!("Attempting to re-listen on: {:?}", addr);
+                    if let Err(e) = self.swarm.listen_on(addr.clone()) {
+                        warn!("Failed to re-listen on {:?}: {:?}", addr, e);
+                    }
+                }
+            }
+            SwarmEvent::ListenerError { error, listener_id } => {
+                warn!(
+                    "Listener error: {:?}, listener_id: {:?}",
+                    error, listener_id
+                );
             }
             SwarmEvent::Behaviour(AgentEvent::Identify(sub_event)) => {
                 self.handle_identify_event(sub_event).await
