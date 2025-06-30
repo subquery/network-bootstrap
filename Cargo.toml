@@ -10,7 +10,7 @@ cached = "0.55"
 dotenv = "0.15"
 futures-util = "0.3"
 hex = "0.4"
-libp2p = { version = "0.55", features = [
+libp2p = { version = "0.56", features = [
   "dns",
   "tokio",
   "identify",
